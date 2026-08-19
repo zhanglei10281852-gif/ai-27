@@ -27,13 +27,6 @@ func New(store repository.Store, c clock.Clock, interval time.Duration, batch in
 	return &Worker{store: store, clock: c, interval: interval, batch: batch, logger: logger}
 }
 
-func detachedJobContext(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return context.WithoutCancel(ctx)
-}
-
 func (w *Worker) Run(ctx context.Context) error {
 	if err := w.RunOnce(ctx); err != nil {
 		w.logger.Error("worker initial pass failed", "error", err)
@@ -70,17 +63,16 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 			return err
 		}
 		for _, job := range jobs {
-			jobCtx := detachedJobContext(ctx)
-			if err := w.processJob(jobCtx, tx, job); err != nil {
+			if err := w.processJob(ctx, tx, job); err != nil {
 				dead := job.Attempts >= job.MaxAttempts
 				backoff := time.Duration(job.Attempts*job.Attempts) * time.Second
-				if retryErr := tx.RetryJob(jobCtx, job.ID, now.Add(backoff), err.Error(), dead); retryErr != nil {
+				if retryErr := tx.RetryJob(ctx, job.ID, now.Add(backoff), err.Error(), dead); retryErr != nil {
 					return fmt.Errorf("retry job %s: %w", job.ID, retryErr)
 				}
 				w.logger.Warn("outbox job failed", "job_id", job.ID, "attempt", job.Attempts, "dead", dead, "error", err)
 				continue
 			}
-			if err := tx.CompleteJob(jobCtx, job.ID, now); err != nil {
+			if err := tx.CompleteJob(ctx, job.ID, now); err != nil {
 				return err
 			}
 		}
